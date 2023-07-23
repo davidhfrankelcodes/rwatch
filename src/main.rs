@@ -1,3 +1,5 @@
+// main.rs
+
 mod args_parser;
 mod command_executor;
 mod screen;

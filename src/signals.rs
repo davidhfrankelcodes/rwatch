@@ -1,3 +1,5 @@
+// signals.rs
+
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
