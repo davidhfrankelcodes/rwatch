@@ -1,3 +1,6 @@
 # .gitignore
 Cargo.lock
 target/
+
+# notes
+.notes

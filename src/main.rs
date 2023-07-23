@@ -25,6 +25,9 @@ fn main() {
         // Clear the screen
         screen::clear_screen();
 
+        // Set the cursor to the top of the terminal
+        screen::set_cursor_to_top();
+
         // Execute the command
         let output = command_executor::execute_command(&args.command);
 
