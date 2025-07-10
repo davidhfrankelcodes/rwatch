@@ -1,56 +1,57 @@
 # rwatch
 
-`rwatch` is a command-line utility written in Rust that allows you to run a command repeatedly and watch its output. It's a Rust re-implementation of the classic Unix `watch` command.
+A modern, cross-platform Rust alternative to `watch`, with color, diff, and more.
 
 ## Features
-
-- Run a given command repeatedly
-- Clear screen between command runs
-- Customizable interval for command execution
-- Handle user interruption gracefully
-- Cross-platform
-
-## Installation
-
-### Building from source
-
-1. Make sure you have Rust installed. If not, install Rust using rustup:
-
-    ```sh
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-    ```
-
-2. Clone this repository:
-
-    ```sh
-    git clone https://github.com/davidhfrankelcodes/rwatch.git
-    cd rwatch
-    ```
-
-3. Build and install `rwatch`:
-
-    ```sh
-    cargo build --release
-    cargo install --path .
-    ```
-
-4. The `rwatch` command should now be available. Try running `rwatch --help` for usage information.
+- Periodically runs a command and displays its output fullscreen
+- Highlights differences between runs (with `-d`/`--differences`)
+- Optionally keeps all changes since first run (`-d=permanent`)
+- Supports ANSI color output (`-c`/`--color`)
+- Beeps on command failure (`-b`/`--beep`)
+- Exits on error, output change, or unchanged output for N cycles
+- Customizable interval (via `-n`, `--interval`, or `WATCH_INTERVAL` env)
+- No-title, no-wrap, and direct exec modes
 
 ## Usage
 
 ```sh
-rwatch <command> [interval]
+rwatch [OPTIONS] -- command [args...]
 ```
 
-### Example
-To watch the contents of a directory change, you might use:
+### Common Options
+- `-n, --interval <seconds>`: Set update interval (default: 2, or `$WATCH_INTERVAL`)
+- `-d, --differences[=permanent]`: Highlight output differences; keep all changes with `=permanent`
+- `-c, --color`: Show ANSI color sequences
+- `-b, --beep`: Beep if command exits non-zero
+- `-e, --errexit`: Freeze on error and exit after key press
+- `-g, --chgexit`: Exit when output changes
+- `-q, --equexit <cycles>`: Exit when output does not change for N cycles
+- `-t, --no-title`: Hide header
+- `-w, --no-wrap`: Disable line wrapping
+- `-x, --exec`: Pass command directly (no shell)
 
-```sh
-rwatch "ls -l" 1
-```
+### Examples
 
-## Contributing
-Contributions to `rwatch` are welcome! Please read the contributing guidelines before submitting a pull request.
+- Watch a directory listing, highlighting changes:
+  ```sh
+  rwatch -d -- ls -l
+  ```
+- Run a command every 5 seconds:
+  ```sh
+  rwatch -n 5 -- date
+  ```
+- Watch a command, beep on error:
+  ```sh
+  rwatch -b -- make test
+  ```
+- Use a custom interval from the environment:
+  ```sh
+  WATCH_INTERVAL=10 rwatch -- git status
+  ```
+
+## Platform Notes
+- On Windows, the default shell is `sh` (if available). Use `-x` for direct exec.
+- Output is fullscreen; press Ctrl+C to exit.
 
 ## License
-`rwatch` is licensed under the [MIT License](https://opensource.org/license/mit).
+MIT
