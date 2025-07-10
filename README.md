@@ -50,7 +50,6 @@ rwatch [OPTIONS] -- command [args...]
   ```
 
 ## Platform Notes
-- On Windows, the default shell is `sh` (if available). Use `-x` for direct exec.
 - Output is fullscreen; press Ctrl+C to exit.
 
 ## License
