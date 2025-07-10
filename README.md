@@ -49,8 +49,17 @@ rwatch [OPTIONS] -- command [args...]
   WATCH_INTERVAL=10 rwatch -- git status
   ```
 
-## Platform Notes
-- Output is fullscreen; press Ctrl+C to exit.
+## Installation
+
+#### Build from source
+
+Clone the repository and install using Cargo:
+
+```sh
+git clone https://github.com/davidhfrankelcodes/rwatch.git
+cd rwatch
+cargo install --path .
+```
 
 ## License
 MIT
