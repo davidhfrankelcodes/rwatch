@@ -9,9 +9,6 @@ use regex::Regex;
 use shell_words;
 
 fn main() -> Result<()> {
-    // Read environment override for interval, defaulting to 2 seconds
-    let env_interval = env::var_os("WATCH_INTERVAL");
-
     let matches = Command::new("rwatch")
         .version("0.1.0")
         .about("execute a program periodically, showing output fullscreen")
