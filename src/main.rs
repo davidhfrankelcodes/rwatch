@@ -1,43 +1,178 @@
-// main.rs
+/*
+Cargo.toml:
+[package]
+name = "rwatch"
+version = "0.1.0"
+edition = "2021"
 
-mod args_parser;
-mod command_executor;
-mod screen;
-mod signals;
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.1", features = ["derive"] }
+crossterm = { version = "0.26", features = ["event"] }
+difference = "2.0"
+chrono = { version = "0.4", features = ["local"] }
+shell-words = "1.1"
+regex = "1"
+*/
 
-use std::io::{self, Write};
-use std::thread::sleep;
+use anyhow::Result;
+use clap::{Arg, ArgAction, Command};
+use crossterm::{execute, terminal::{Clear, ClearType}, cursor::MoveTo, event::read};
+use std::{io::{stdout, Write}, time::{Duration, Instant}, process::Command as ProcCommand, env};
+use difference::Changeset;
+use chrono::Local;
+use regex::Regex;
 
-fn main() {
-    // Parse command line arguments
-    let args = args_parser::parse_args();
+fn main() -> Result<()> {
+    let matches = Command::new("rwatch")
+        .version("0.1.0")
+        .about("execute a program periodically, showing output fullscreen")
+        .arg(Arg::new("differences")
+            .short('d')
+            .long("differences")
+            .value_name("permanent")
+            .num_args(0..=1)
+            .require_equals(true)
+            .help("Highlight differences; use '=permanent' to keep all changes since first"))
+        .arg(Arg::new("interval")
+            .short('n').long("interval")
+            .value_name("seconds")
+            .help("Specify update interval")
+            .default_value(&env::var("WATCH_INTERVAL").unwrap_or_else(|_| "2".into())))
+        .arg(Arg::new("precise")
+            .short('p').long("precise")
+            .action(ArgAction::SetTrue)
+            .help("Attempt to run command every interval"))
+        .arg(Arg::new("no_title")
+            .short('t').long("no-title")
+            .action(ArgAction::SetTrue)
+            .help("Turn off header"))
+        .arg(Arg::new("beep")
+            .short('b').long("beep")
+            .action(ArgAction::SetTrue)
+            .help("Beep if command exits non-zero"))
+        .arg(Arg::new("errexit")
+            .short('e').long("errexit")
+            .action(ArgAction::SetTrue)
+            .help("Freeze on error and exit after key press"))
+        .arg(Arg::new("chgexit")
+            .short('g').long("chgexit")
+            .action(ArgAction::SetTrue)
+            .help("Exit when output changes"))
+        .arg(Arg::new("equexit")
+            .short('q').long("equexit")
+            .value_name("cycles")
+            .help("Exit when output does not change for given cycles"))
+        .arg(Arg::new("color")
+            .short('c').long("color")
+            .action(ArgAction::SetTrue)
+            .help("Interpret ANSI color sequences"))
+        .arg(Arg::new("exec")
+            .short('x').long("exec")
+            .action(ArgAction::SetTrue)
+            .help("Pass command directly (no shell)"))
+        .arg(Arg::new("no_wrap")
+            .short('w').long("no-wrap")
+            .action(ArgAction::SetTrue)
+            .help("Turn off line wrapping"))
+        .arg(Arg::new("command")
+            .help("Command to watch")
+            .required(true)
+            .trailing_var_arg(true)
+            .num_args(1..))
+        .get_matches();
 
-    // Register signal handler
-    signals::register_signal_handler();
+    let diff_flag = matches.contains_id("differences");
+    let perm_flag = matches.get_one::<String>("differences").map(|v| v == "permanent").unwrap_or(false);
+    let interval_secs: f64 = matches.get_one::<String>("interval").unwrap().parse()?;
+    let interval = Duration::from_secs_f64(interval_secs.max(0.1));
+    let precise = matches.get_flag("precise");
+    let no_title = matches.get_flag("no_title");
+    let beep = matches.get_flag("beep");
+    let errexit = matches.get_flag("errexit");
+    let chgexit = matches.get_flag("chgexit");
+    let equexit = matches.get_one::<String>("equexit").map(|s| s.parse::<u32>().unwrap_or(0));
+    let color = matches.get_flag("color");
+    let exec_flag = matches.get_flag("exec");
+    let no_wrap = matches.get_flag("no_wrap");
+    let cmd_vec: Vec<&String> = matches.get_many::<String>("command").unwrap().collect();
+    let cmd_str = cmd_vec.join(" ");
 
-    // Infinite loop to run the command
+    let mut prev = String::new();
+    let base = prev.clone();
+    let mut equal_count = 0;
+    let mut next = Instant::now();
+
+    let ansi_regex = Regex::new(r"\x1b\[.*?[@-~]").unwrap();
+
     loop {
-        // Check if the user has pressed CTRL+C and exit the loop if so
-        if signals::is_interrupted() {
-            break;
+        next += interval;
+        let output = if exec_flag {
+            let ps = shell_words::split(&cmd_str)?;
+            ProcCommand::new(&ps[0]).args(&ps[1..]).output()
+        } else {
+            ProcCommand::new("sh").arg("-c").arg(&cmd_str).output()
+        };
+
+        let output = output.map_err(|e| anyhow::anyhow!("Execution failed: {}", e))?;
+
+        if beep && !output.status.success() {
+            print!("\x07"); stdout().flush()?;
         }
 
-        // Clear the screen
-        screen::clear_screen();
+        let mut stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
+        if !color {
+            stdout_str = ansi_regex.replace_all(&stdout_str, "").to_string();
+        }
 
-        // Set the cursor to the top of the terminal
-        screen::set_cursor_to_top();
+        if !no_wrap {
+            let (cols, _) = crossterm::terminal::size()?;
+            stdout_str = stdout_str.lines()
+                .map(|l| if l.len() > cols as usize { format!("{}…", &l[..cols as usize-1]) } else { l.to_string() })
+                .collect::<Vec<_>>().join("\n");
+        }
 
-        // Execute the command
-        let output = command_executor::execute_command(&args.command);
+        execute!(stdout(), Clear(ClearType::All), MoveTo(0,0))?;
+        if !no_title {
+            println!("Every {:.1}s: {}    {}", interval_secs, cmd_str, Local::now().format("%Y-%m-%d %H:%M:%S"));
+            println!();
+        }
 
-        // Display the output
-        print!("{}", output);
+        if diff_flag {
+            let ref_text = if perm_flag { &base } else { &prev };
+            let changes = Changeset::new(ref_text, &stdout_str, "\n");
+            for diff in changes.diffs {
+                match diff {
+                    difference::Difference::Same(ref x) => for line in x.lines() { println!(" {}", line); },
+                    difference::Difference::Add(ref x) => for line in x.lines() { println!("+{}", line); },
+                    difference::Difference::Rem(ref x) => for line in x.lines() { println!("-{}", line); },
+                }
+            }
+        } else {
+            print!("{}", stdout_str);
+        }
 
-        // Flush the output to the screen immediately
-        io::stdout().flush().unwrap();
+        if let Some(cycles) = equexit {
+            if stdout_str == prev {
+                equal_count += 1;
+                if equal_count >= cycles { break; }
+            } else { equal_count = 0; }
+        }
 
-        // Sleep for the specified interval
-        sleep(args.interval);
+        if chgexit && stdout_str != prev { break; }
+
+        if errexit && !output.status.success() {
+            eprintln!("Command error, press any key to exit..."); read()?; break;
+        }
+
+        prev = stdout_str.clone();
+
+        if precise {
+            let now = Instant::now(); if next > now { std::thread::sleep(next - now); }
+        } else {
+            std::thread::sleep(interval);
+        }
     }
+
+    Ok(())
 }

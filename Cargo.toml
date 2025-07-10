@@ -1,9 +1,13 @@
 [package]
 name = "rwatch"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-clap = "3.0.0" # check for the latest version
-crossterm = "0.26.0" # check for the latest version
-ctrlc = "3.1.9" # check for the latest version
+anyhow = "1.0"
+clap = { version = "4.1", features = ["derive"] }
+crossterm = { version = "0.26", features = ["event"] }
+difference = "2.0"
+chrono = { version = "0.4", features = ["local"] }
+shell-words = "1.1"
+regex = "1"
