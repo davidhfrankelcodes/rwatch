@@ -108,7 +108,11 @@ fn main() -> Result<()> {
             let ps = shell_words::split(&cmd_str)?;
             ProcCommand::new(&ps[0]).args(&ps[1..]).output()
         } else {
-            ProcCommand::new("sh").arg("-c").arg(&cmd_str).output()
+            #[cfg(windows)]
+            let output = ProcCommand::new("cmd").arg("/C").arg(&cmd_str).output();
+            #[cfg(not(windows))]
+            let output = ProcCommand::new("sh").arg("-c").arg(&cmd_str).output();
+            output
         };
 
         let output = output.map_err(|e| anyhow::anyhow!("Execution failed: {}", e))?;
