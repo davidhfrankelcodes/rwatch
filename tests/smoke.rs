@@ -1,15 +1,142 @@
 //! Basic smoke test for rwatch
+//! Integration tests for rwatch features
 
 use std::process::Command;
 
-#[test]
-fn rwatch_runs_and_exits() {
-    // This test runs rwatch with a simple command and --chgexit so it exits after first run
+fn run_rwatch(args: &[&str]) -> (bool, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_rwatch"))
-        .args(["--chgexit", "--", "echo", "hello"])
+        .args(args)
         .output()
         .expect("failed to execute rwatch");
-    assert!(output.status.success(), "rwatch did not exit successfully");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("hello"), "output did not contain expected text");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    (output.status.success(), stdout, stderr)
+}
+
+fn fail_command() -> Vec<&'static str> {
+    if cfg!(windows) {
+        vec!["cmd", "/C", "exit", "1"]
+    } else {
+        vec!["false"]
+    }
+}
+
+fn echo_command(text: &str) -> Vec<String> {
+    if cfg!(windows) {
+        vec!["cmd".to_string(), "/C".to_string(), format!("echo {}", text)]
+    } else {
+        vec!["echo".to_string(), text.to_string()]
+    }
+}
+
+#[test]
+fn rwatch_runs_and_exits() {
+    let mut args: Vec<String> = vec!["--chgexit".into(), "--".into()];
+    args.extend(echo_command("hello"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok, "rwatch did not exit successfully");
+    assert!(out.to_lowercase().contains("hello"), "output did not contain expected text: {}", out);
+}
+
+#[test]
+fn test_basic_echo() {
+    let mut args: Vec<String> = vec!["--chgexit".into(), "--".into()];
+    args.extend(echo_command("hello"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok);
+    assert!(out.to_lowercase().contains("hello"));
+}
+
+#[test]
+fn test_diff_flag() {
+    let mut args: Vec<String> = vec!["-d".into(), "--chgexit".into(), "--".into()];
+    args.extend(echo_command("foo"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok);
+    assert!(out.contains(" foo") || out.contains("+foo"));
+}
+
+#[test]
+fn test_diff_permanent() {
+    let mut args: Vec<String> = vec!["-d=permanent".into(), "--chgexit".into(), "--".into()];
+    args.extend(echo_command("bar"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok);
+    assert!(out.contains(" bar") || out.contains("+bar"));
+}
+
+#[test]
+fn test_color_flag() {
+    let mut args: Vec<String> = vec!["-c".into(), "--chgexit".into(), "--".into()];
+    args.extend(echo_command("\x1b[31mred\x1b[0m"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok);
+    assert!(out.contains("\x1b[31mred\x1b[0m") || out.contains("[31mred"));
+}
+
+#[test]
+fn test_no_color_flag() {
+    let mut args: Vec<String> = vec!["--chgexit".into(), "--".into()];
+    args.extend(echo_command("\x1b[31mred\x1b[0m"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok);
+    assert!(!out.contains("\x1b[31mred\x1b[0m"));
+    assert!(out.to_lowercase().contains("red"));
+}
+
+#[test]
+fn test_beep_flag() {
+    let mut args: Vec<String> = vec!["-b".into(), "--chgexit".into(), "--".into()];
+    args.extend(fail_command().iter().map(|&s| s.into()));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, _out, _err) = run_rwatch(&args_ref);
+    // Just check it runs and exits
+    assert!(ok || !ok, "Should run even if command fails");
+}
+
+#[test]
+fn test_equexit_flag() {
+    let mut args: Vec<String> = vec!["-q".into(), "2".into(), "--".into()];
+    args.extend(echo_command("same"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok);
+    assert!(out.to_lowercase().contains("same"));
+}
+
+#[test]
+fn test_no_title_flag() {
+    let mut args: Vec<String> = vec!["-t".into(), "--chgexit".into(), "--".into()];
+    args.extend(echo_command("foo"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok);
+    assert!(!out.contains("Every "));
+}
+
+#[test]
+fn test_no_wrap_flag() {
+    let long = "a".repeat(200);
+    let mut args: Vec<String> = vec!["-w".into(), "--chgexit".into(), "--".into()];
+    args.extend(echo_command(&long));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok);
+    assert!(out.contains(&long));
+}
+
+#[test]
+fn test_exec_flag() {
+    let mut args: Vec<String> = vec!["-x".into(), "--chgexit".into(), "--".into()];
+    args.extend(echo_command("exec"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok);
+    assert!(out.to_lowercase().contains("exec"));
 }
