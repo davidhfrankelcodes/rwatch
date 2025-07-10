@@ -6,8 +6,8 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.1", features = ["derive"] }
-crossterm = { version = "0.26", features = ["event"] }
+crossterm = "0.26"
 difference = "2.0"
-chrono = { version = "0.4", features = ["local"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 shell-words = "1.1"
 regex = "1"

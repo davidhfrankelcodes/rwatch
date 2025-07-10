@@ -1,29 +1,17 @@
-/*
-Cargo.toml:
-[package]
-name = "rwatch"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-anyhow = "1.0"
-clap = { version = "4.1", features = ["derive"] }
-crossterm = { version = "0.26", features = ["event"] }
-difference = "2.0"
-chrono = { version = "0.4", features = ["local"] }
-shell-words = "1.1"
-regex = "1"
-*/
-
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
+use clap::parser::ValueSource;
 use crossterm::{execute, terminal::{Clear, ClearType}, cursor::MoveTo, event::read};
 use std::{io::{stdout, Write}, time::{Duration, Instant}, process::Command as ProcCommand, env};
 use difference::Changeset;
 use chrono::Local;
 use regex::Regex;
+use shell_words;
 
 fn main() -> Result<()> {
+    // Read environment override for interval, defaulting to 2 seconds
+    let env_interval = env::var_os("WATCH_INTERVAL");
+
     let matches = Command::new("rwatch")
         .version("0.1.0")
         .about("execute a program periodically, showing output fullscreen")
@@ -38,7 +26,7 @@ fn main() -> Result<()> {
             .short('n').long("interval")
             .value_name("seconds")
             .help("Specify update interval")
-            .default_value(&env::var("WATCH_INTERVAL").unwrap_or_else(|_| "2".into())))
+            .default_value("2"))
         .arg(Arg::new("precise")
             .short('p').long("precise")
             .action(ArgAction::SetTrue)
@@ -84,7 +72,15 @@ fn main() -> Result<()> {
 
     let diff_flag = matches.contains_id("differences");
     let perm_flag = matches.get_one::<String>("differences").map(|v| v == "permanent").unwrap_or(false);
-    let interval_secs: f64 = matches.get_one::<String>("interval").unwrap().parse()?;
+    // Determine interval_secs: if user did not provide --interval, check env var
+    let interval_secs: f64 = if let Some(ValueSource::CommandLine) = matches.value_source("interval") {
+        matches.get_one::<String>("interval").unwrap().parse()?
+
+    } else if let Some(env_val) = env::var("WATCH_INTERVAL").ok() {
+        env_val.parse().unwrap_or(2.0)
+    } else {
+        2.0
+    };
     let interval = Duration::from_secs_f64(interval_secs.max(0.1));
     let precise = matches.get_flag("precise");
     let no_title = matches.get_flag("no_title");
@@ -95,7 +91,11 @@ fn main() -> Result<()> {
     let color = matches.get_flag("color");
     let exec_flag = matches.get_flag("exec");
     let no_wrap = matches.get_flag("no_wrap");
-    let cmd_vec: Vec<&String> = matches.get_many::<String>("command").unwrap().collect();
+
+    // Collect command args as &str for join
+    let cmd_vec: Vec<&str> = matches.get_many::<String>("command").unwrap()
+        .map(|s| s.as_str())
+        .collect();
     let cmd_str = cmd_vec.join(" ");
 
     let mut prev = String::new();
