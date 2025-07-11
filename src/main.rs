@@ -106,6 +106,7 @@ fn main() -> Result<()> {
     let mut next = Instant::now();
 
     let ansi_regex = Regex::new(r"\x1b\[.*?[@-~]").unwrap();
+    let mut last_status = 0i32;
 
     loop {
         next += interval;
@@ -125,6 +126,10 @@ fn main() -> Result<()> {
         };
 
         let output = output.map_err(|e| anyhow::anyhow!("Execution failed: {}", e))?;
+        let status_code = output.status.code().unwrap_or(1);
+        if !output.status.success() {
+            last_status = status_code;
+        }
 
         if beep && !output.status.success() {
             print!("\x07"); stdout().flush()?;
@@ -168,21 +173,19 @@ fn main() -> Result<()> {
                 if equal_count >= cycles { break; }
             } else { equal_count = 0; }
         }
-
         if chgexit && stdout_str != prev { break; }
-
         if errexit && !output.status.success() {
             eprintln!("Command error, press any key to exit..."); read()?; break;
         }
-
         prev = stdout_str.clone();
-
         if precise {
             let now = Instant::now(); if next > now { std::thread::sleep(next - now); }
         } else {
             std::thread::sleep(interval);
         }
     }
-
+    if last_status != 0 {
+        std::process::exit(last_status);
+    }
     Ok(())
 }

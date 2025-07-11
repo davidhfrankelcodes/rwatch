@@ -136,3 +136,13 @@ fn test_powershell_flag() {
     assert!(ok, "rwatch did not exit successfully: {}", err);
     assert!(out.to_lowercase().contains("pshell works!"), "output did not contain expected text: {}", out);
 }
+
+#[test]
+fn test_powershell_exit_code() {
+    // Test that PowerShell nonzero exit code is handled
+    let mut args: Vec<String> = vec!["--powershell".into(), "--equexit".into(), "1".into(), "--".into()];
+    args.push("exit 42".into());
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, _out, _err) = run_rwatch(&args_ref);
+    assert!(!ok, "rwatch should not exit successfully for nonzero exit code");
+}
