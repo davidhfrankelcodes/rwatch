@@ -2,6 +2,14 @@
 name = "rwatch"
 version = "0.1.0"
 edition = "2021"
+authors = ["David H. Frankel"]
+description = "A modern, cross-platform Rust alternative to 'watch', with color, diff, and more. Periodically runs a command and displays its output fullscreen, with diff, color, beep, and more."
+license = "MIT"
+repository = "https://github.com/davidhfrankelcodes/rwatch"
+documentation = "https://docs.rs/rwatch"
+readme = "README.md"
+keywords = ["watch", "cli", "terminal", "diff", "color"]
+categories = ["command-line-utilities", "development-tools::debugging", "os::unix-apis"]
 
 [dependencies]
 anyhow = "1.0"
