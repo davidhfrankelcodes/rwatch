@@ -148,3 +148,20 @@ fn test_exec_flag() {
     assert!(ok);
     assert!(out.to_lowercase().contains("exec"));
 }
+
+#[test]
+fn test_powershell_flag() {
+    if cfg!(windows) {
+        // Only run this test on Windows
+        let mut args: Vec<String> = vec!["--powershell".into(), "--chgexit".into(), "--".into()];
+        // Use a PowerShell-specific command
+        args.push("Write-Output".into());
+        args.push("pshell works!".into());
+        let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let (ok, out, err) = run_rwatch(&args_ref);
+        assert!(ok, "rwatch did not exit successfully: {}", err);
+        assert!(out.to_lowercase().contains("pshell works!"), "output did not contain expected text: {}", out);
+    } else {
+        eprintln!("Skipping PowerShell test on non-Windows platform");
+    }
+}

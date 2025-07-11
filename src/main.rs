@@ -60,6 +60,10 @@ fn main() -> Result<()> {
             .short('w').long("no-wrap")
             .action(ArgAction::SetTrue)
             .help("Turn off line wrapping"))
+        .arg(Arg::new("powershell")
+            .long("powershell")
+            .action(ArgAction::SetTrue)
+            .help("Run the command using PowerShell on Windows (instead of cmd)") )
         .arg(Arg::new("command")
             .help("Command to watch")
             .required(true)
@@ -88,6 +92,7 @@ fn main() -> Result<()> {
     let color = matches.get_flag("color");
     let exec_flag = matches.get_flag("exec");
     let no_wrap = matches.get_flag("no_wrap");
+    let powershell_flag = matches.get_flag("powershell");
 
     // Collect command args as &str for join
     let cmd_vec: Vec<&str> = matches.get_many::<String>("command").unwrap()
@@ -109,7 +114,11 @@ fn main() -> Result<()> {
             ProcCommand::new(&ps[0]).args(&ps[1..]).output()
         } else {
             #[cfg(windows)]
-            let output = ProcCommand::new("cmd").arg("/C").arg(&cmd_str).output();
+            let output = if powershell_flag {
+                ProcCommand::new("powershell.exe").arg("-Command").arg(&cmd_str).output()
+            } else {
+                ProcCommand::new("cmd").arg("/C").arg(&cmd_str).output()
+            };
             #[cfg(not(windows))]
             let output = ProcCommand::new("sh").arg("-c").arg(&cmd_str).output();
             output
