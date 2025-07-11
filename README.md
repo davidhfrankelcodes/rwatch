@@ -51,7 +51,15 @@ rwatch [OPTIONS] -- command [args...]
 
 ## Installation
 
-#### Build from source
+### Install from crates.io
+
+If you have Rust and Cargo installed, you can install the latest published version directly:
+
+```sh
+cargo install rwatch
+```
+
+### Build from source
 
 Clone the repository and install using Cargo:
 
