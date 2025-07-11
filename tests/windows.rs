@@ -1,5 +1,4 @@
-//! Basic smoke test for rwatch
-//! Integration tests for rwatch features
+//! Integration tests for rwatch features on Windows
 
 use std::process::Command;
 
@@ -13,20 +12,8 @@ fn run_rwatch(args: &[&str]) -> (bool, String, String) {
     (output.status.success(), stdout, stderr)
 }
 
-fn fail_command() -> Vec<&'static str> {
-    if cfg!(windows) {
-        vec!["cmd", "/C", "exit", "1"]
-    } else {
-        vec!["false"]
-    }
-}
-
 fn echo_command(text: &str) -> Vec<String> {
-    if cfg!(windows) {
-        vec!["cmd".to_string(), "/C".to_string(), format!("echo {}", text)]
-    } else {
-        vec!["echo".to_string(), text.to_string()]
-    }
+    vec!["cmd".to_string(), "/C".to_string(), format!("echo {}", text)]
 }
 
 #[test]
@@ -86,9 +73,6 @@ fn test_no_color_flag() {
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let (ok, out, _) = run_rwatch(&args_ref);
     assert!(ok);
-    // Print output for debugging
-    println!("test_no_color_flag output: {:?}", out);
-    // Only check the last non-empty line (the command output)
     let last_line = out.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
     assert!(last_line.to_lowercase().contains("red"));
     assert!(!last_line.contains("\x1b[31mred\x1b[0m"), "Output line should not contain raw ANSI escape");
@@ -96,16 +80,8 @@ fn test_no_color_flag() {
 
 #[test]
 fn test_beep_flag() {
-    if cfg!(windows) {
-        eprintln!("Skipping beep test on Windows");
-        return;
-    }
-    let mut args: Vec<String> = vec!["-b".into(), "--chgexit".into(), "--".into()];
-    args.extend(fail_command().iter().map(|&s| s.into()));
-    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (ok, _out, _err) = run_rwatch(&args_ref);
-    // Just check it runs and exits
-    assert!(ok || !ok, "Should run even if command fails");
+    // Skipped: beep is not meaningful on Windows in CI
+    eprintln!("Skipping beep test on Windows");
 }
 
 #[test]
@@ -151,17 +127,12 @@ fn test_exec_flag() {
 
 #[test]
 fn test_powershell_flag() {
-    if cfg!(windows) {
-        // Only run this test on Windows
-        let mut args: Vec<String> = vec!["--powershell".into(), "--chgexit".into(), "--".into()];
-        // Use a PowerShell-specific command
-        args.push("Write-Output".into());
-        args.push("pshell works!".into());
-        let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let (ok, out, err) = run_rwatch(&args_ref);
-        assert!(ok, "rwatch did not exit successfully: {}", err);
-        assert!(out.to_lowercase().contains("pshell works!"), "output did not contain expected text: {}", out);
-    } else {
-        eprintln!("Skipping PowerShell test on non-Windows platform");
-    }
+    // PowerShell-specific command
+    let mut args: Vec<String> = vec!["--powershell".into(), "--chgexit".into(), "--".into()];
+    args.push("Write-Output".into());
+    args.push("pshell works!".into());
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, err) = run_rwatch(&args_ref);
+    assert!(ok, "rwatch did not exit successfully: {}", err);
+    assert!(out.to_lowercase().contains("pshell works!"), "output did not contain expected text: {}", out);
 }
