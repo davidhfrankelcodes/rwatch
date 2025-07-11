@@ -4,3 +4,18 @@ target/
 
 # notes
 notes.txt
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Rust build artifacts
+*.rlib
+
+# Backup files
+*~
+*.bak
