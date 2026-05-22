@@ -101,11 +101,13 @@ fn main() -> Result<()> {
     let cmd_str = cmd_vec.join(" ");
 
     let mut prev = String::new();
-    let base = prev.clone();
+    let mut base: Option<String> = None;
     let mut equal_count = 0;
     let mut next = Instant::now();
 
     let ansi_regex = Regex::new(r"\x1b\[.*?[@-~]").unwrap();
+    // loop always runs at least once; 0 is overwritten before being read
+    #[allow(unused_assignments)]
     let mut last_status = 0i32;
 
     loop {
@@ -118,7 +120,9 @@ fn main() -> Result<()> {
             let output = if powershell_flag {
                 ProcCommand::new("powershell.exe").arg("-Command").arg(&cmd_str).output()
             } else {
-                ProcCommand::new("cmd").arg("/C").arg(&cmd_str).output()
+                // /S makes cmd.exe correctly strip both outer quotes from the argument,
+                // avoiding the bug where cmd /C "command with spaces" leaves a trailing ".
+                ProcCommand::new("cmd").args(&["/S", "/C", &cmd_str]).output()
             };
             #[cfg(not(windows))]
             let output = ProcCommand::new("sh").arg("-c").arg(&cmd_str).output();
@@ -127,9 +131,7 @@ fn main() -> Result<()> {
 
         let output = output.map_err(|e| anyhow::anyhow!("Execution failed: {}", e))?;
         let status_code = output.status.code().unwrap_or(1);
-        if !output.status.success() {
-            last_status = status_code;
-        }
+        last_status = status_code;
 
         if beep && !output.status.success() {
             print!("\x07"); stdout().flush()?;
@@ -142,8 +144,16 @@ fn main() -> Result<()> {
 
         if !no_wrap {
             let (cols, _) = crossterm::terminal::size()?;
+            let limit = (cols as usize).saturating_sub(1);
             stdout_str = stdout_str.lines()
-                .map(|l| if l.len() > cols as usize { format!("{}…", &l[..cols as usize-1]) } else { l.to_string() })
+                .map(|l| {
+                    let chars: Vec<char> = l.chars().collect();
+                    if chars.len() > cols as usize {
+                        format!("{}…", chars[..limit].iter().collect::<String>())
+                    } else {
+                        l.to_string()
+                    }
+                })
                 .collect::<Vec<_>>().join("\n");
         }
 
@@ -153,8 +163,13 @@ fn main() -> Result<()> {
             println!();
         }
 
+        if perm_flag && base.is_none() {
+            base = Some(stdout_str.clone());
+        }
+
         if diff_flag {
-            let ref_text = if perm_flag { &base } else { &prev };
+            let base_str = base.as_deref().unwrap_or("");
+            let ref_text = if perm_flag { base_str } else { prev.as_str() };
             let changes = Changeset::new(ref_text, &stdout_str, "\n");
             for diff in changes.diffs {
                 match diff {
