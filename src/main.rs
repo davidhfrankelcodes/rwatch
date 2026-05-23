@@ -8,7 +8,7 @@ use crossterm::{
     event::read,
 };
 use std::{
-    io::{stdout, Write},
+    io::{stdout, Write, IsTerminal},
     time::{Duration, Instant},
     process::Command as ProcCommand,
     env,
@@ -101,6 +101,8 @@ fn main() -> Result<()> {
     let color = matches.get_flag("color");
     let exec_flag = matches.get_flag("exec");
     let no_wrap = matches.get_flag("no_wrap");
+    // Only used on Windows; the flag is still parsed on all platforms for consistent help text.
+    #[cfg_attr(not(windows), allow(unused_variables))]
     let powershell_flag = matches.get_flag("powershell");
 
     let cmd_vec: Vec<&str> = matches.get_many::<String>("command").unwrap()
@@ -110,8 +112,11 @@ fn main() -> Result<()> {
 
     let cwd = env::current_dir()?;
 
-    // Enter alternate screen (like real watch). Non-fatal when stdout is not a TTY (e.g., tests).
-    let entered_alt = execute!(stdout(), EnterAlternateScreen, Hide).is_ok();
+    // Only use terminal-specific features (alternate screen, cursor hide, clear) when stdout
+    // is connected to a real TTY. When piped or redirected, emit plain output instead.
+    let is_tty = stdout().is_terminal();
+
+    let entered_alt = is_tty && execute!(stdout(), EnterAlternateScreen, Hide).is_ok();
 
     // Ctrl+C sends on this channel so the loop can clean up before exiting.
     let (ctrlc_tx, ctrlc_rx) = mpsc::channel::<()>();
@@ -192,8 +197,9 @@ fn main() -> Result<()> {
                 }
             }
 
-            // Clear within the alternate screen buffer (or the main buffer if alt not supported).
-            let _ = execute!(stdout(), Clear(ClearType::All), MoveTo(0, 0));
+            if is_tty {
+                let _ = execute!(stdout(), Clear(ClearType::All), MoveTo(0, 0));
+            }
             if !no_title {
                 println!("Every {:.1}s: {}    {}", interval_secs, cmd_str, Local::now().format("%Y-%m-%d %H:%M:%S"));
                 println!();

@@ -24,5 +24,6 @@ Thumbs.db
 # Executables
 *.exe
 
-# Evironment
+# Environment / secrets
 .env
+scripts/.env.test
