@@ -4,6 +4,7 @@ target/
 
 # notes
 notes.txt
+
 # IDE/editor files
 .idea/
 .vscode/
@@ -19,3 +20,6 @@ Thumbs.db
 # Backup files
 *~
 *.bak
+
+# Executables
+*.exe
