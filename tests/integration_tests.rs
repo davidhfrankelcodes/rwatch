@@ -338,6 +338,50 @@ fn test_beep_flag_no_crash() {
     assert!(ok, "beep flag should not cause a crash on success");
 }
 
+// ── working directory ─────────────────────────────────────────────────────────
+
+/// The subprocess must inherit rwatch's working directory, not some arbitrary default.
+#[test]
+fn test_working_directory_inherited() {
+    use std::env;
+
+    let expected = env::current_dir().unwrap();
+    let expected_str = expected.to_string_lossy().to_lowercase();
+
+    // `cd` (Windows cmd) and `pwd` (sh) both print the current directory.
+    #[cfg(windows)]
+    let dir_cmd = vec!["-q", "1", "-t", "--", "cd"];
+    #[cfg(not(windows))]
+    let dir_cmd = vec!["-q", "1", "-t", "--", "pwd"];
+
+    let (ok, out, err) = run_rwatch(&dir_cmd);
+    assert!(ok, "dir command failed; stderr: {}", err);
+    assert!(
+        out.to_lowercase().contains(&expected_str),
+        "expected working dir {:?} in output; got:\n{}",
+        expected_str, out
+    );
+}
+
+/// PowerShell mode must also inherit the correct working directory.
+#[cfg(windows)]
+#[test]
+fn test_powershell_working_directory_inherited() {
+    use std::env;
+
+    let expected = env::current_dir().unwrap();
+    let expected_str = expected.to_string_lossy().to_lowercase();
+
+    let args: Vec<&str> = vec!["--powershell", "-q", "1", "-t", "--", "(Get-Location).Path"];
+    let (ok, out, err) = run_rwatch(&args);
+    assert!(ok, "PowerShell dir command failed; stderr: {}", err);
+    assert!(
+        out.to_lowercase().contains(&expected_str),
+        "expected working dir {:?} in PS output; got:\n{}",
+        expected_str, out
+    );
+}
+
 // ── Windows-only ─────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
