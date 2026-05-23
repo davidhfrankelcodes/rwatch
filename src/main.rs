@@ -180,6 +180,7 @@ fn main() -> Result<()> {
             }
         } else {
             print!("{}", stdout_str);
+            stdout().flush()?;
         }
 
         if let Some(cycles) = equexit {
