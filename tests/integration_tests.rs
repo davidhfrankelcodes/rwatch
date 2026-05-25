@@ -651,3 +651,580 @@ fn test_powershell_working_directory_inherited() {
         expected_str, clean
     );
 }
+
+// ── helper unit tests (extended) ──────────────────────────────────────────────
+
+#[test]
+fn test_echo_cmd_helper_format() {
+    let v = echo_cmd("hello");
+    assert_eq!(v.len(), 1, "echo_cmd should return a single-element vec");
+    assert_eq!(v[0], "echo hello", "echo_cmd format mismatch");
+}
+
+#[test]
+fn test_exit_cmd_helper_format() {
+    assert_eq!(exit_cmd(0)[0],  "exit 0",  "exit_cmd(0) format mismatch");
+    assert_eq!(exit_cmd(1)[0],  "exit 1",  "exit_cmd(1) format mismatch");
+    assert_eq!(exit_cmd(42)[0], "exit 42", "exit_cmd(42) format mismatch");
+    assert_eq!(exit_cmd(0).len(), 1, "exit_cmd should be a single-element vec");
+}
+
+#[test]
+fn test_strip_terminal_codes_empty_string() {
+    assert_eq!(strip_terminal_codes(""), "", "empty input → empty output");
+}
+
+#[test]
+fn test_strip_terminal_codes_no_escapes_unchanged() {
+    let s = "plain text, no escapes 123";
+    assert_eq!(strip_terminal_codes(s), s, "string with no escapes should pass through unchanged");
+}
+
+#[test]
+fn test_strip_terminal_codes_multiple_consecutive_sequences() {
+    // Three consecutive CSI sequences followed by text.
+    let input = "\x1b[0m\x1b[1;31m\x1b[2Jhello";
+    assert_eq!(strip_terminal_codes(input), "hello",
+        "all three CSI sequences should be stripped");
+}
+
+#[test]
+fn test_strip_terminal_codes_unicode_chars_preserved() {
+    // Non-ASCII Unicode should survive even when mixed with escape sequences.
+    let input = "\x1b[31mcafé\x1b[0m";
+    assert_eq!(strip_terminal_codes(input), "café",
+        "Unicode chars should be preserved after stripping control sequences");
+}
+
+#[test]
+fn test_strip_terminal_codes_esc_not_csi_drops_only_esc() {
+    // ESC followed by a non-'[' byte: only the ESC is dropped; the following char stays.
+    assert_eq!(strip_terminal_codes("\x1bNhello"), "Nhello",
+        "ESC-N: ESC dropped, 'N' and rest kept");
+    assert_eq!(strip_terminal_codes("a\x1b(Bb"), "a(Bb",
+        "ESC-(B (character-set): ESC dropped, following chars kept");
+}
+
+#[test]
+fn test_strip_terminal_codes_trailing_esc_no_panic() {
+    // ESC at the very end: should not panic; ESC is simply dropped.
+    assert_eq!(strip_terminal_codes("hello\x1b"), "hello",
+        "trailing ESC should be dropped without panic");
+    assert_eq!(strip_terminal_codes("\x1b"), "",
+        "lone ESC should yield empty string");
+}
+
+#[test]
+fn test_has_diff_line_empty_output_always_false() {
+    assert!(!has_diff_line("", '+', "anything"), "empty output should never match");
+    assert!(!has_diff_line("", ' ', ""),
+        "empty output with empty text — no lines to iterate, still false");
+}
+
+#[test]
+fn test_has_diff_line_only_prefix_char_matches_empty_text() {
+    // A line that is exactly the prefix char (no following text) should match empty text.
+    assert!(has_diff_line("+", '+', ""),
+        "bare '+' should match empty text after stripping prefix");
+    assert!(has_diff_line("+\n", '+', ""),
+        "'+\\n' should match empty text");
+    assert!(!has_diff_line("+", '+', "foo"),
+        "bare '+' should not match non-empty text");
+}
+
+#[test]
+fn test_has_diff_line_no_false_positives() {
+    assert!(!has_diff_line("+bar\n", '+', "foo"), "wrong text should not match");
+    assert!(!has_diff_line("-foo\n", '+', "foo"), "wrong prefix '-' should not satisfy '+'");
+    assert!(!has_diff_line(" foo\n", '+', "foo"), "space prefix should not satisfy '+' check");
+    assert!(!has_diff_line("foo\n",  '+', "foo"), "line with no prefix char should not match");
+}
+
+// ── CLI introspection ─────────────────────────────────────────────────────────
+
+#[test]
+fn test_help_flag() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rwatch"))
+        .arg("--help")
+        .output()
+        .expect("failed to run rwatch --help");
+    assert!(output.status.success(), "rwatch --help should exit 0");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.to_lowercase().contains("usage") || text.to_lowercase().contains("rwatch"),
+        "help output should mention 'usage' or 'rwatch'; got: {}", text
+    );
+}
+
+#[test]
+fn test_version_flag() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rwatch"))
+        .arg("--version")
+        .output()
+        .expect("failed to run rwatch --version");
+    assert!(output.status.success(), "rwatch --version should exit 0");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains("0.1"),
+        "version output should contain version number; got: {}", text
+    );
+}
+
+#[test]
+fn test_no_command_exits_nonzero() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rwatch"))
+        .output()
+        .expect("failed to run rwatch with no args");
+    assert!(
+        !output.status.success(),
+        "rwatch with no arguments should exit non-zero (clap error)"
+    );
+}
+
+// ── interval edge cases ───────────────────────────────────────────────────────
+
+/// Interval of 0 is clamped to 0.1 s by the code; rwatch must not hang or panic.
+#[test]
+fn test_interval_zero_clamps_to_minimum() {
+    let mut args: Vec<String> = vec!["-n".into(), "0".into(), "--chgexit".into(), "--".into()];
+    args.extend(echo_cmd("zero_interval_test"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, err) = run_rwatch(&args_ref);
+    assert!(ok, "interval 0 should not crash; stderr: {}", err);
+    assert!(out.contains("zero_interval_test"), "output: {}", out);
+}
+
+/// Without -n the default interval is 2 s; the title should show "2.0s".
+#[test]
+fn test_title_shows_default_two_second_interval() {
+    let mut args: Vec<String> = vec!["--chgexit".into(), "--".into()];
+    args.extend(echo_cmd("default_interval_sentinel"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok);
+    let clean = strip_terminal_codes(&out);
+    assert!(
+        clean.contains("2.0s"),
+        "title should show default interval 2.0s; got: {}", clean
+    );
+}
+
+/// WATCH_INTERVAL set to a non-numeric value silently falls back to 2.0 s.
+#[test]
+fn test_watch_interval_env_invalid_falls_back_to_default() {
+    let mut args: Vec<String> = vec!["--chgexit".into(), "--".into()];
+    args.extend(echo_cmd("env_invalid_sentinel"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch_with_env(&args_ref, "WATCH_INTERVAL", "not_a_number");
+    assert!(ok);
+    let clean = strip_terminal_codes(&out);
+    assert!(
+        clean.contains("2.0s"),
+        "invalid WATCH_INTERVAL should fall back to 2.0s; got: {}", clean
+    );
+}
+
+// ── diff across multiple runs ─────────────────────────────────────────────────
+
+/// With -d and -q 1 at a short interval, rwatch runs exactly twice.
+/// Run 1 compares against empty prev → lines are Added (+).
+/// Run 2 compares against run-1 output (identical) → lines are Same (space).
+/// Both markers must appear in the combined stdout.
+#[test]
+fn test_diff_second_run_shows_same_lines() {
+    let text = "diff_two_runs_sentinel";
+    let mut args: Vec<String> = vec![
+        "-d".into(), "-n".into(), "0.2".into(),
+        "-q".into(), "1".into(), "-t".into(), "--".into(),
+    ];
+    args.extend(echo_cmd(text));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, err) = run_rwatch(&args_ref);
+    assert!(ok, "diff two-run test failed; stderr: {}", err);
+    assert!(
+        has_diff_line(&out, '+', text),
+        "run 1 should show '+' (Added, prev is empty); lines: {:?}",
+        out.lines().collect::<Vec<_>>()
+    );
+    assert!(
+        has_diff_line(&out, ' ', text),
+        "run 2 should show ' ' (Same, output is unchanged); lines: {:?}",
+        out.lines().collect::<Vec<_>>()
+    );
+}
+
+/// With -d=permanent and two identical runs, both should show Same (" " prefix).
+/// Base is set on run 1, and output never diverges from it.
+#[test]
+fn test_permanent_diff_stable_across_two_runs() {
+    let text = "perm_stable_sentinel";
+    let mut args: Vec<String> = vec![
+        "-d=permanent".into(), "-n".into(), "0.2".into(),
+        "-q".into(), "1".into(), "-t".into(), "--".into(),
+    ];
+    args.extend(echo_cmd(text));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, err) = run_rwatch(&args_ref);
+    assert!(ok, "permanent diff two-run test failed; stderr: {}", err);
+    assert!(
+        has_diff_line(&out, ' ', text),
+        "permanent diff with stable output: all runs should show ' ' (Same); lines: {:?}",
+        out.lines().collect::<Vec<_>>()
+    );
+    assert!(
+        !has_diff_line(&out, '+', text),
+        "permanent diff with stable output: no run should show '+' (Added); lines: {:?}",
+        out.lines().collect::<Vec<_>>()
+    );
+}
+
+/// -d combined with --chgexit: the first run (vs empty prev) shows Added (+).
+#[test]
+fn test_diff_with_chgexit_shows_added() {
+    let text = "diff_chgexit_text";
+    let mut args: Vec<String> = vec!["-d".into(), "--chgexit".into(), "--".into()];
+    args.extend(echo_cmd(text));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok);
+    assert!(
+        has_diff_line(&out, '+', text),
+        "diff+chgexit: first run should show '+'; lines: {:?}",
+        out.lines().collect::<Vec<_>>()
+    );
+}
+
+/// diff mode with a command that produces no stdout output should not crash.
+#[test]
+fn test_diff_with_empty_output_no_crash() {
+    // Redirect stdout to stderr; rwatch sees empty stdout.
+    let cmd = "echo empty_diff_check 1>&2";
+    let args: Vec<&str> = vec!["-d", "-q", "1", "-t", "--", cmd];
+    let (ok, _, err) = run_rwatch(&args);
+    assert!(ok, "diff mode with empty output should not crash; stderr: {}", err);
+}
+
+/// With -q 1 and a short interval, rwatch runs exactly twice (1 initial + 1 equal).
+/// Total elapsed time must be at least one interval (one sleep).
+#[test]
+fn test_equexit_1_runs_twice() {
+    let mut args: Vec<String> = vec![
+        "-n".into(), "0.25".into(), "-q".into(), "1".into(), "-t".into(), "--".into(),
+    ];
+    args.extend(echo_cmd("equexit1_sentinel"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let start = Instant::now();
+    let (ok, out, err) = run_rwatch(&args_ref);
+    let elapsed = start.elapsed();
+    assert!(ok, "equexit=1 test failed; stderr: {}", err);
+    assert!(out.contains("equexit1_sentinel"), "output: {}", out);
+    assert!(
+        elapsed >= Duration::from_millis(200),
+        "equexit=1 should sleep at least once (~250 ms); got {:?}", elapsed
+    );
+}
+
+// ── exec flag edge cases ──────────────────────────────────────────────────────
+
+/// --exec with multiple positional arguments: all are passed directly without
+/// shell interpretation.
+#[test]
+fn test_exec_multiple_args_passed_through() {
+    #[cfg(not(windows))]
+    let args: Vec<&str> = vec![
+        "--exec", "--chgexit", "--",
+        "/bin/echo", "exec_arg_a", "exec_arg_b",
+    ];
+    #[cfg(windows)]
+    let args: Vec<&str> = vec![
+        "--exec", "--chgexit", "--",
+        "cmd.exe", "/C", "echo", "exec_arg_a", "exec_arg_b",
+    ];
+    let (ok, out, err) = run_rwatch(&args);
+    let clean = strip_terminal_codes(&out);
+    assert!(ok, "--exec multiple args failed; stderr: {}", err);
+    assert!(clean.contains("exec_arg_a"), "first arg missing: {}", clean);
+    assert!(clean.contains("exec_arg_b"), "second arg missing: {}", clean);
+}
+
+// ── output content / combined flags ──────────────────────────────────────────
+
+/// A line of 300 multi-byte Unicode characters should not cause a panic.
+/// Guards the char-aware truncation fix (byte-indexing would split UTF-8 sequences).
+#[test]
+fn test_unicode_long_line_no_crash() {
+    let long_unicode = "é".repeat(300); // each 'é' is 2 bytes in UTF-8
+    let mut args: Vec<String> = vec!["--chgexit".into(), "--".into()];
+    args.extend(echo_cmd(&long_unicode));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, _, err) = run_rwatch(&args_ref);
+    assert!(ok, "long Unicode line should not panic; stderr: {}", err);
+}
+
+/// -t and -w together: no header appears and no ellipsis truncation.
+#[test]
+fn test_combined_no_title_no_wrap() {
+    let long = "combined_flag_test ".repeat(20);
+    let mut args: Vec<String> = vec!["-t".into(), "-w".into(), "--chgexit".into(), "--".into()];
+    args.extend(echo_cmd(long.trim()));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, err) = run_rwatch(&args_ref);
+    assert!(ok, "-t -w combined test failed; stderr: {}", err);
+    assert!(!out.contains("Every "), "-t should suppress 'Every …' header: {}", out);
+    assert!(!out.contains('…'),      "-w should prevent ellipsis truncation: {}", out);
+    assert!(out.contains("combined_flag_test"), "output should contain command text: {}", out);
+}
+
+/// With -q 2 the same text must appear at least 3 times in combined stdout
+/// (1 initial run + 2 equal runs = 3 iterations).
+#[test]
+fn test_equexit_output_appears_multiple_times() {
+    let text = "repeat_sentinel_xyz";
+    let mut args: Vec<String> = vec![
+        "-n".into(), "0.1".into(), "-q".into(), "2".into(), "-t".into(), "--".into(),
+    ];
+    args.extend(echo_cmd(text));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, err) = run_rwatch(&args_ref);
+    let clean = strip_terminal_codes(&out);
+    assert!(ok, "equexit output count test failed; stderr: {}", err);
+    let count = clean.matches(text).count();
+    assert!(
+        count >= 3,
+        "expected ≥3 occurrences of '{}' (1 initial + 2 equal runs); got {} in:\n{}",
+        text, count, clean
+    );
+}
+
+/// --precise with multiple iterations must complete all cycles and respect the
+/// timing invariant (≥ 2 intervals elapsed for 3 runs).
+#[test]
+fn test_precise_multiple_iterations_timing() {
+    let mut args: Vec<String> = vec![
+        "-p".into(), "-n".into(), "0.2".into(),
+        "-q".into(), "2".into(), "-t".into(), "--".into(),
+    ];
+    args.extend(echo_cmd("precise_multi_iter"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let start = Instant::now();
+    let (ok, out, err) = run_rwatch(&args_ref);
+    let elapsed = start.elapsed();
+    assert!(ok, "--precise multiple iterations failed; stderr: {}", err);
+    assert!(out.contains("precise_multi_iter"), "output: {}", out);
+    assert!(
+        elapsed >= Duration::from_millis(350),
+        "--precise: expected ≥350 ms for 2 sleeps of 200 ms each; got {:?}", elapsed
+    );
+}
+
+// ── beep behavior ─────────────────────────────────────────────────────────────
+
+/// --beep with a failing command must emit the BEL character (\x07) to stdout.
+#[test]
+fn test_beep_on_failure_emits_bel() {
+    let mut args: Vec<String> = vec!["-b".into(), "-q".into(), "1".into(), "--".into()];
+    args.extend(exit_cmd(1));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let output = Command::new(env!("CARGO_BIN_EXE_rwatch"))
+        .args(&args_ref)
+        .output()
+        .expect("failed to run rwatch --beep");
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout_str.contains('\x07'),
+        "--beep with failing command should emit BEL (\\x07); stdout bytes: {:?}",
+        &output.stdout[..output.stdout.len().min(64)]
+    );
+}
+
+/// --beep with a successful command must NOT emit BEL.
+#[test]
+fn test_beep_not_emitted_on_success() {
+    let mut args: Vec<String> = vec!["-b".into(), "--chgexit".into(), "--".into()];
+    args.extend(echo_cmd("no_beep_success"));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, out, _) = run_rwatch(&args_ref);
+    assert!(ok, "successful command with --beep should exit 0");
+    assert!(
+        !out.contains('\x07'),
+        "BEL must not be emitted on success; stdout: {:?}",
+        &out[..out.len().min(128)]
+    );
+}
+
+// ── exit code propagation (extended) ─────────────────────────────────────────
+
+/// rwatch must propagate exit code 2 from the watched command.
+#[test]
+fn test_exit_code_2_propagated() {
+    let mut args: Vec<String> = vec!["-q".into(), "1".into(), "--".into()];
+    args.extend(exit_cmd(2));
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let output = Command::new(env!("CARGO_BIN_EXE_rwatch"))
+        .args(&args_ref)
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_eq!(code, 2, "rwatch should propagate exit code 2; got {}", code);
+}
+
+// ── Windows-only (extended) ───────────────────────────────────────────────────
+
+/// --powershell pipeline: items generated by a PowerShell pipeline should appear
+/// in rwatch's output.
+#[cfg(windows)]
+#[test]
+fn test_powershell_pipeline() {
+    let args: Vec<&str> = vec![
+        "--powershell", "-q", "1", "-t", "--",
+        "1..3 | ForEach-Object { \"ps_item_$_\" }",
+    ];
+    let (ok, out, err) = run_rwatch(&args);
+    let clean = strip_terminal_codes(&out);
+    assert!(ok, "PowerShell pipeline test failed: {}", err);
+    assert!(clean.contains("ps_item_1"), "pipeline item 1 missing: {}", clean);
+    assert!(clean.contains("ps_item_2"), "pipeline item 2 missing: {}", clean);
+    assert!(clean.contains("ps_item_3"), "pipeline item 3 missing: {}", clean);
+}
+
+/// --powershell with semicolon-chained statements produces multiline output.
+#[cfg(windows)]
+#[test]
+fn test_powershell_multiline_output() {
+    let args: Vec<&str> = vec![
+        "--powershell", "-q", "1", "-t", "--",
+        "Write-Output 'ps_ml_1'; Write-Output 'ps_ml_2'; Write-Output 'ps_ml_3'",
+    ];
+    let (ok, out, err) = run_rwatch(&args);
+    let clean = strip_terminal_codes(&out);
+    assert!(ok, "PowerShell multiline test failed: {}", err);
+    assert!(clean.contains("ps_ml_1"), "line 1 missing: {}", clean);
+    assert!(clean.contains("ps_ml_2"), "line 2 missing: {}", clean);
+    assert!(clean.contains("ps_ml_3"), "line 3 missing: {}", clean);
+}
+
+/// --powershell combined with --no-title (-t) must suppress the "Every …" header.
+#[cfg(windows)]
+#[test]
+fn test_powershell_no_title() {
+    let args: Vec<&str> = vec![
+        "--powershell", "-t", "--chgexit", "--",
+        "Write-Output 'ps_notitle_ok'",
+    ];
+    let (ok, out, err) = run_rwatch(&args);
+    assert!(ok, "PowerShell no-title test failed: {}", err);
+    assert!(!out.contains("Every "), "no-title should suppress 'Every …' header: {}", out);
+    assert!(out.contains("ps_notitle_ok"), "command output should still appear: {}", out);
+}
+
+/// --powershell with -d: on the first run (prev is empty) all output lines are Added (+).
+#[cfg(windows)]
+#[test]
+fn test_powershell_diff_flag() {
+    let args: Vec<&str> = vec![
+        "--powershell", "-d", "--chgexit", "--",
+        "Write-Output 'ps_diff_val'",
+    ];
+    let (ok, out, err) = run_rwatch(&args);
+    assert!(ok, "PowerShell diff test failed: {}", err);
+    assert!(
+        has_diff_line(&out, '+', "ps_diff_val"),
+        "PowerShell diff: first run should show '+' (Added); lines: {:?}",
+        out.lines().collect::<Vec<_>>()
+    );
+}
+
+/// --exec on Windows with cmd.exe called directly (no shell wrapper).
+#[cfg(windows)]
+#[test]
+fn test_windows_exec_flag_with_cmd_binary() {
+    let args: Vec<&str> = vec![
+        "--exec", "--chgexit", "--",
+        "cmd.exe", "/C", "echo", "win_exec_direct_ok",
+    ];
+    let (ok, out, err) = run_rwatch(&args);
+    let clean = strip_terminal_codes(&out);
+    assert!(ok, "Windows --exec with cmd.exe failed: {}", err);
+    assert!(clean.contains("win_exec_direct_ok"), "output: {}", clean);
+}
+
+// ── Unix-only (extended) ──────────────────────────────────────────────────────
+
+/// --exec bypasses the shell, so $HOME is received literally by /bin/echo.
+#[cfg(not(windows))]
+#[test]
+fn test_unix_exec_flag_no_shell_expansion() {
+    let args: Vec<&str> = vec!["--exec", "--chgexit", "--", "/bin/echo", "$HOME"];
+    let (ok, out, err) = run_rwatch(&args);
+    let clean = strip_terminal_codes(&out);
+    assert!(ok, "--exec no-shell-expansion test failed; stderr: {}", err);
+    assert!(
+        clean.contains("$HOME"),
+        "--exec should pass $HOME as a literal argument, not expand it; got: {}", clean
+    );
+}
+
+/// The sh shell must support $() subshell expansion.
+#[cfg(not(windows))]
+#[test]
+fn test_unix_subshell_expansion() {
+    let args: Vec<&str> = vec!["-q", "1", "-t", "--", "echo $(echo subshell_expanded)"];
+    let (ok, out, err) = run_rwatch(&args);
+    let clean = strip_terminal_codes(&out);
+    assert!(ok, "subshell expansion failed; stderr: {}", err);
+    assert!(
+        clean.contains("subshell_expanded"),
+        "$() expansion output should appear; got: {}", clean
+    );
+}
+
+/// printf generates clean multiline output without needing shell-specific quoting.
+#[cfg(not(windows))]
+#[test]
+fn test_unix_printf_multiline() {
+    let args: Vec<&str> = vec![
+        "-q", "1", "-t", "--",
+        r"printf 'pf_line_a\npf_line_b\npf_line_c\n'",
+    ];
+    let (ok, out, err) = run_rwatch(&args);
+    let clean = strip_terminal_codes(&out);
+    assert!(ok, "printf multiline failed; stderr: {}", err);
+    assert!(clean.contains("pf_line_a"), "line a missing: {}", clean);
+    assert!(clean.contains("pf_line_b"), "line b missing: {}", clean);
+    assert!(clean.contains("pf_line_c"), "line c missing: {}", clean);
+}
+
+/// When the watched command is not found, sh exits non-zero and rwatch propagates it.
+#[cfg(not(windows))]
+#[test]
+fn test_unix_command_not_found_exits_nonzero() {
+    let args: Vec<&str> = vec![
+        "-q", "1", "--",
+        "this_cmd_does_not_exist_xyz_rwatch_test_sentinel",
+    ];
+    let (ok, _, _) = run_rwatch(&args);
+    assert!(!ok, "unknown command should cause rwatch to exit non-zero");
+}
+
+/// Subprocess stderr on Unix must not bleed into rwatch's captured stdout.
+/// Complements the cross-platform test but uses Unix-native redirection.
+#[cfg(not(windows))]
+#[test]
+fn test_unix_stderr_isolated_from_stdout() {
+    let args: Vec<&str> = vec!["-q", "1", "-t", "--", "echo unix_stderr_only >&2"];
+    let (ok, out, _) = run_rwatch(&args);
+    let clean = strip_terminal_codes(&out);
+    assert!(ok, "stderr-only command should exit 0");
+    assert!(
+        !clean.contains("unix_stderr_only"),
+        "subprocess stderr should not appear in rwatch stdout; got: {}", clean
+    );
+}
