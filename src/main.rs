@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
 use clap::parser::ValueSource;
 use crossterm::{
-    execute,
+    execute, queue,
     terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
     cursor::{MoveTo, Hide, Show},
     event::read,
@@ -21,7 +21,7 @@ use shell_words;
 
 fn main() -> Result<()> {
     let matches = Command::new("rwatch")
-        .version("0.1.3")
+        .version("0.1.4")
         .about("execute a program periodically, showing output fullscreen")
         .arg(Arg::new("differences")
             .short('d')
@@ -197,12 +197,9 @@ fn main() -> Result<()> {
                 }
             }
 
-            if is_tty {
-                let _ = execute!(stdout(), Clear(ClearType::All), MoveTo(0, 0));
-            }
+            let mut frame = String::new();
             if !no_title {
-                println!("Every {:.1}s: {}    {}", interval_secs, cmd_str, Local::now().format("%Y-%m-%d %H:%M:%S"));
-                println!();
+                frame.push_str(&format!("Every {:.1}s: {}    {}\n\n", interval_secs, cmd_str, Local::now().format("%Y-%m-%d %H:%M:%S")));
             }
 
             if perm_flag && base.is_none() {
@@ -215,13 +212,27 @@ fn main() -> Result<()> {
                 let changes = Changeset::new(ref_text, &stdout_str, "\n");
                 for diff in changes.diffs {
                     match diff {
-                        difference::Difference::Same(ref x) => for line in x.lines() { println!(" {}", line); },
-                        difference::Difference::Add(ref x) => for line in x.lines() { println!("+{}", line); },
-                        difference::Difference::Rem(ref x) => for line in x.lines() { println!("-{}", line); },
+                        difference::Difference::Same(ref x) => for line in x.lines() { frame.push_str(&format!(" {}\n", line)); },
+                        difference::Difference::Add(ref x) => for line in x.lines() { frame.push_str(&format!("+{}\n", line)); },
+                        difference::Difference::Rem(ref x) => for line in x.lines() { frame.push_str(&format!("-{}\n", line)); },
                     }
                 }
             } else {
-                print!("{}", stdout_str);
+                frame.push_str(&stdout_str);
+            }
+
+            // Redraw in place: overwrite the previous frame from the top and only
+            // clear what's left over below it, instead of blanking the whole
+            // screen first. Clearing first (then redrawing) is what causes the
+            // visible flash on refresh.
+            if is_tty {
+                let mut out = stdout();
+                queue!(out, MoveTo(0, 0))?;
+                write!(out, "{}", frame)?;
+                queue!(out, Clear(ClearType::FromCursorDown))?;
+                out.flush()?;
+            } else {
+                print!("{}", frame);
                 stdout().flush()?;
             }
 
