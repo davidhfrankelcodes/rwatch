@@ -1,6 +1,6 @@
 [package]
 name = "rwatch"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 authors = ["David H. Frankel"]
 description = "A modern, cross-platform Rust alternative to 'watch', with color, diff, and more. Periodically runs a command and displays its output fullscreen, with diff, color, beep, and more."
